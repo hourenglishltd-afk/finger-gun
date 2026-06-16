@@ -98,13 +98,13 @@
   <div id="gate">
     <div class="kicker">gesture shooter</div>
     <h1>手指神槍手</h1>
-    <p class="lead">準心固定在畫面正中央,靶會跟著你的手移動。把手舉進畫面就自動上膛,移動手把靶帶到中央準心上,再用大拇指往上一彈,擊發。</p>
+    <p class="lead">把手舉進畫面就自動上膛。準心會跟著你的食指尖移動——移動食指把準心對到靶上,再用大拇指往上一彈,擊發。</p>
     <div class="how">
       <div class="step"><div class="emo">🖐️</div><div class="cap">手舉進畫面<br>自動上膛</div></div>
-      <div class="step"><div class="emo">🎯</div><div class="cap">移動手<br>把靶帶到中央準心</div></div>
+      <div class="step"><div class="emo">🎯</div><div class="cap">移動食指<br>把準心對到靶上</div></div>
       <div class="step"><div class="emo">👍</div><div class="cap">大拇指上彈<br>扣下扳機</div></div>
     </div>
-    <div class="tip">關鍵:靶會黏著你的手、準心固定在正中央。把手移到畫面中央讓靶蓋住準心,再彈大拇指開火。手掌打開、正面朝鏡頭最好認;「側著比成手槍」那種姿勢反而容易讓鏡頭跟丟。</div>
+    <div class="tip">關鍵:靶固定不動,準心跟著你的食指尖。用食指瞄準把準心對到靶上,再彈大拇指開火。手掌打開、正面朝鏡頭最好認,鏡頭比較不會跟丟。</div>
     <button class="go" id="goBtn">開始遊戲</button>
     <div class="err" id="err"></div>
     <div class="note">需要鏡頭權限與網路連線(載入手部模型)。請用 Safari/Chrome 開啟,勿用 App 內建預覽。桌機鏡頭最穩。</div>
@@ -172,14 +172,14 @@ function size(){
   W = window.innerWidth; H = window.innerHeight;
   play.width = W*DPR; play.height = H*DPR;
   ctx.setTransform(DPR,0,0,DPR,0,0);
-  aim = { x: W/2, y: H/2 };
+  if(!aim) aim = { x: W/2, y: H/2 };
 }
 window.addEventListener('resize', ()=>{ size(); if(target) clampTarget(); });
 
 function spawnTarget(){
   const r = 46;
-  const x = W*0.5 + (Math.random()-0.5)*W*0.5;
-  const y = H*0.5 + (Math.random()-0.5)*H*0.4;
+  const x = W*0.5 + (Math.random()-0.5)*W*0.6;
+  const y = H*0.5 + (Math.random()-0.5)*H*0.5;
   target = { x, y, r, pulse:0 };
   clampTarget();
 }
@@ -215,17 +215,11 @@ function handleHand(res){
   // 只要鏡頭抓到手就上膛——不再要求手指槍姿勢
   armed = true;
 
-  // 用手掌中心(取手腕+四指根、不含拇指,這樣彈拇指開火時不會牽動瞄準)帶動靶,
-  // 玩家移動手就能把靶滑到固定在畫面中央的準心上,再彈拇指擊發。
-  if(target){
-    const palm = [0,5,9,13,17];
-    let px = 0, py = 0;
-    for(const i of palm){ px += lm[i].x; py += lm[i].y; }
-    px = (px/palm.length)*W; py = (py/palm.length)*H;
-    target.x += (px - target.x) * 0.35;
-    target.y += (py - target.y) * 0.35;
-    clampTarget();
-  }
+  // 準心跟著食指尖(landmark 8)移動;靶固定不動,玩家移動食指把準心對到靶上再彈拇指擊發。
+  // 食指負責瞄準、拇指當擊錘——兩根手指分開,彈拇指時不會牽動準心。
+  const tip = lm[8];
+  aim.x += (tip.x*W - aim.x) * 0.6;
+  aim.y += (tip.y*H - aim.y) * 0.6;
 
   if(fireCooldown > 0) fireCooldown--;
   const ang = thumbAngle(lm);
