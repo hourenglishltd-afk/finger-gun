@@ -104,7 +104,7 @@
       <div class="step"><div class="emo">🎯</div><div class="cap">移動手<br>把靶帶到中央準心</div></div>
       <div class="step"><div class="emo">👍</div><div class="cap">大拇指上彈<br>扣下扳機</div></div>
     </div>
-    <div class="tip">關鍵:靶會黏著你的手、準心固定在正中央。把手移到畫面中央讓靶蓋住準心,再彈大拇指開火。手側著比也沒關係,只要鏡頭看得到手就行。</div>
+    <div class="tip">關鍵:靶會黏著你的手、準心固定在正中央。把手移到畫面中央讓靶蓋住準心,再彈大拇指開火。手掌打開、正面朝鏡頭最好認;「側著比成手槍」那種姿勢反而容易讓鏡頭跟丟。</div>
     <button class="go" id="goBtn">開始遊戲</button>
     <div class="err" id="err"></div>
     <div class="note">需要鏡頭權限與網路連線(載入手部模型)。請用 Safari/Chrome 開啟,勿用 App 內建預覽。桌機鏡頭最穩。</div>
@@ -206,7 +206,7 @@ function handleHand(res){
     poseLostFrames++;
     // 偵測中斷時就清掉角度歷史,避免短暫斷訊重連時殘留的舊角度誤判開火
     prevAngle = null; angleVelHist = [];
-    if(poseLostFrames > 4){ armed=false; setState('lost'); }
+    if(poseLostFrames > 8){ armed=false; setState('lost'); }
     return;
   }
   poseLostFrames = 0;
@@ -392,7 +392,9 @@ const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmark
 function createLandmarker(delegate){
   return HandLandmarker.createFromOptions(vision, {
     baseOptions:{ modelAssetPath: MODEL_URL, delegate },
-    runningMode:"VIDEO", numHands:1 });
+    runningMode:"VIDEO", numHands:1,
+    // 預設 0.5 對「側手 / 快速彈拇指造成的動態模糊」太嚴格,容易跟丟後抓不回來;調鬆讓它更願意重新抓到手
+    minHandDetectionConfidence:0.3, minHandPresenceConfidence:0.3, minTrackingConfidence:0.3 });
 }
 
 async function switchToCPU(){
