@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>手指神槍手 · Finger Gun</title>
+<style>
+  :root {
+    --cream: #F5F0E8;
+    --coral: #E8734A;
+    --teal: #5B9EA6;
+    --ink: #2b2620;
+    --dim: #8a8175;
+    --paper: #EDE6DA;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; background: var(--ink); color: var(--ink);
+    font-family: "Noto Serif TC", Georgia, "Songti TC", serif; overflow: hidden; }
+
+  #stage { position: fixed; inset: 0; background: var(--ink); }
+  #cam, #play { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  #cam  { transform: scaleX(-1); filter: sepia(0.18) saturate(0.85) brightness(0.62) contrast(1.02); }
+  #play { transform: scaleX(-1); }
+
+  #veil { position:absolute; inset:0; pointer-events:none; mix-blend-mode: multiply;
+    background: radial-gradient(130% 90% at 50% 25%, rgba(245,240,232,0) 42%, rgba(43,38,32,0.5) 100%); }
+
+  .hud { position: fixed; z-index: 5; pointer-events: none;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+  #board { top: 20px; left: 50%; transform: translateX(-50%); text-align:center; }
+  #board .eyebrow { font-size: 10px; letter-spacing: 0.42em; text-transform: uppercase;
+    color: var(--cream); opacity: 0.6; }
+  #board .score { font-family: "Noto Serif TC", Georgia, serif; font-size: 56px; font-weight: 700;
+    color: var(--cream); line-height: 1; margin-top: 2px; text-shadow: 0 2px 20px rgba(0,0,0,0.4); }
+  #board .meta { font-size: 11px; letter-spacing: 0.1em; color: var(--coral); margin-top: 4px; }
+
+  #gestureTag { bottom: 22px; left: 18px; font-size: 11px; letter-spacing: 0.12em;
+    color: var(--cream); opacity: 0.75; max-width: 60vw; }
+  #gestureTag .dot { display:inline-block; width:7px;height:7px;border-radius:50%;
+    background:var(--coral); margin-right:7px; vertical-align: middle; }
+  #gestureTag .dot.ready { background:#7BC47F; }
+
+  #streakTag { bottom: 22px; right: 18px; font-size: 11px; letter-spacing: 0.12em;
+    color: var(--cream); opacity: 0.85; text-align:right; }
+  #streakTag b { color: var(--coral); font-size: 15px; }
+
+  #gate { position: fixed; inset: 0; z-index: 20; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap: 20px; text-align:center; padding: 32px;
+    background: radial-gradient(120% 80% at 50% 25%, var(--cream) 0%, var(--paper) 55%, #ddd3c3 100%);
+    color: var(--ink); overflow-y:auto; }
+  #gate .kicker { font-family: ui-monospace, Menlo, monospace; font-size: 11px;
+    letter-spacing: 0.4em; text-transform: uppercase; color: var(--coral); }
+  #gate h1 { font-size: clamp(34px, 9vw, 60px); font-weight: 700; line-height: 1.04; }
+  #gate .lead { max-width: 400px; color: #5e564b; font-size: 15px; line-height: 1.9; }
+  #gate .how { display:flex; gap: 22px; margin: 4px 0; flex-wrap:wrap; justify-content:center; }
+  #gate .how .step { display:flex; flex-direction:column; align-items:center; gap:6px; width: 110px; }
+  #gate .how .emo { font-size: 30px; }
+  #gate .how .cap { font-family: ui-monospace, Menlo, monospace; font-size: 10px;
+    letter-spacing: 0.06em; color: #6b6358; line-height:1.55; }
+  #gate .tip { background: rgba(232,115,74,0.1); border:1px solid rgba(232,115,74,0.3);
+    border-radius: 8px; padding: 12px 16px; max-width: 400px;
+    font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; color:#8a4a30; line-height:1.7; }
+  #gate .go { font-family: ui-monospace, Menlo, monospace; font-size: 14px; letter-spacing: 0.22em;
+    text-transform: uppercase; color: var(--cream); background: var(--coral); border: none;
+    padding: 17px 40px; border-radius: 4px; cursor:pointer;
+    box-shadow: 0 8px 26px rgba(232,115,74,0.4); transition: transform .12s ease; }
+  #gate .go:active { transform: translateY(2px); }
+  #gate .go:disabled { opacity: 0.6; }
+  #gate .err { color:#b6442a; font-size:12px; min-height: 16px; font-family: ui-monospace, Menlo, monospace; }
+  #gate .note { font-family: ui-monospace, Menlo, monospace; font-size: 10px; color: var(--dim);
+    letter-spacing: 0.04em; max-width: 340px; line-height: 1.6; }
+  .hidden { display:none !important; }
+
+  @media (max-width:560px){ #board .score{ font-size: 46px; } }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <video id="cam" playsinline autoplay muted></video>
+    <canvas id="play"></canvas>
+    <div id="veil"></div>
+  </div>
+
+  <div id="board" class="hud">
+    <div class="eyebrow">finger gun</div>
+    <div class="score" id="score">0</div>
+    <div class="meta" id="meta">命中 0 · 射擊 0</div>
+  </div>
+
+  <div id="gestureTag" class="hud"><span class="dot" id="stateDot"></span><span id="gestureText">待命</span></div>
+  <div id="streakTag" class="hud">連續命中 <b id="streak">0</b></div>
+
+  <div id="gate">
+    <div class="kicker">gesture shooter</div>
+    <h1>手指神槍手</h1>
+    <p class="lead">把手側過來比成槍,食指橫向指出去——準星會沿著你的指尖飛出去。大拇指往上一彈,擊發。</p>
+    <div class="how">
+      <div class="step"><div class="emo">🫳</div><div class="cap">手側 30–45°<br>食指橫指畫面</div></div>
+      <div class="step"><div class="emo">🎯</div><div class="cap">準星沿指尖<br>方向延伸</div></div>
+      <div class="step"><div class="emo">👍</div><div class="cap">大拇指上彈<br>扣下扳機</div></div>
+    </div>
+    <div class="tip">關鍵:食指要「橫」在畫面裡(指向左右),不要直直戳向鏡頭——鏡頭才看得清你指向哪。</div>
+    <button class="go" id="goBtn">開始遊戲</button>
+    <div class="err" id="err"></div>
+    <div class="note">需要鏡頭權限與網路連線(載入手部模型)。請用 Safari/Chrome 開啟,勿用 App 內建預覽。桌機鏡頭最穩。</div>
+  </div>
+
+<script type="module">
+import { HandLandmarker, FilesetResolver }
+  from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+const cam = document.getElementById('cam');
+const play = document.getElementById('play');
+const ctx = play.getContext('2d');
+const gate = document.getElementById('gate');
+const goBtn = document.getElementById('goBtn');
+const errEl = document.getElementById('err');
+const scoreEl = document.getElementById('score');
+const metaEl = document.getElementById('meta');
+const streakEl = document.getElementById('streak');
+const gestureText = document.getElementById('gestureText');
+const stateDot = document.getElementById('stateDot');
+
+const C = { cream:'#F5F0E8', coral:'#E8734A', teal:'#5B9EA6', ink:'#2b2620', good:'#7BC47F' };
+
+let landmarker = null;
+let W = 0, H = 0, DPR = 1;
+
+let score = 0, hits = 0, shots = 0, streak = 0;
+let aim = null;
+let aimDir = null;
+let fingerBase = null;
+let fingerTip = null;
+let armed = false;
+let target = null;
+let particles = [];
+let muzzle = 0, recoil = 0;
+let tracer = null;
+
+let actx = null;
+function sfx(type){
+  try{
+    if(!actx) actx = new (window.AudioContext||window.webkitAudioContext)();
+    const t = actx.currentTime, o = actx.createOscillator(), g = actx.createGain();
+    o.connect(g); g.connect(actx.destination);
+    if(type==='shot'){ o.type='triangle'; o.frequency.setValueAtTime(440,t);
+      o.frequency.exponentialRampToValueAtTime(95,t+0.11);
+      g.gain.setValueAtTime(0.18,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.12);
+      o.start(t); o.stop(t+0.13); }
+    else { o.type='sine'; o.frequency.setValueAtTime(680,t);
+      o.frequency.exponentialRampToValueAtTime(1080,t+0.1);
+      g.gain.setValueAtTime(0.2,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.17);
+      o.start(t); o.stop(t+0.18); }
+  }catch(e){}
+}
+
+function size(){
+  DPR = Math.min(window.devicePixelRatio||1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  play.width = W*DPR; play.height = H*DPR;
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener('resize', ()=>{ size(); if(target) clampTarget(); });
+
+function spawnTarget(){
+  const m = 90, r = 46;
+  target = { x: m + Math.random()*(W-m*2), y: m+40 + Math.random()*(H-m*2-120), r, pulse:0 };
+}
+function clampTarget(){
+  if(!target) return;
+  target.x = Math.max(60, Math.min(W-60, target.x));
+  target.y = Math.max(110, Math.min(H-90, target.y));
+}
+
+function dist(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
+
+function thumbAngle(lm){
+  const mcp = lm[2], tip = lm[4];
+  return Math.atan2(tip.y - mcp.y, tip.x - mcp.x);
+}
+
+function isGunPose(lm){
+  const idxExt = dist(lm[8], lm[0]) > dist(lm[6], lm[0]) * 1.15;
+  const mid = dist(lm[12], lm[0]) < dist(lm[10], lm[0]) * 1.05;
+  const ring = dist(lm[16], lm[0]) < dist(lm[14], lm[0]) * 1.05;
+  const pinky = dist(lm[20], lm[0]) < dist(lm[18], lm[0]) * 1.05;
+  return idxExt && mid && ring && pinky;
+}
+
+let prevAngle = null;
+let angleVelHist = [];
+let fireCooldown = 0;
+let poseLostFrames = 0;
+
+function handleHand(res){
+  if(!res.handLandmarks || res.handLandmarks.length === 0){
+    poseLostFrames++;
+    if(poseLostFrames > 4){ armed=false; aim=null; fingerBase=null; fingerTip=null;
+      setState('lost'); prevAngle=null; }
+    return;
+  }
+  poseLostFrames = 0;
+  const lm = res.handLandmarks[0];
+
+  const baseN = lm[5], tipN = lm[8];
+  fingerBase = { x: baseN.x*W, y: baseN.y*H };
+  fingerTip  = { x: tipN.x*W,  y: tipN.y*H };
+
+  let dx = fingerTip.x - fingerBase.x;
+  let dy = fingerTip.y - fingerBase.y;
+  const len = Math.hypot(dx,dy) || 1;
+  aimDir = { x: dx/len, y: dy/len };
+
+  const reach = Math.max(W,H) * 0.55;
+  aim = { x: fingerTip.x + aimDir.x*reach, y: fingerTip.y + aimDir.y*reach };
+
+  const gun = isGunPose(lm);
+  armed = gun;
+
+  if(fireCooldown > 0) fireCooldown--;
+  const ang = thumbAngle(lm);
+  if(prevAngle !== null){
+    let d = ang - prevAngle;
+    while(d > Math.PI) d -= 2*Math.PI;
+    while(d < -Math.PI) d += 2*Math.PI;
+    angleVelHist.push(d);
+    if(angleVelHist.length > 4) angleVelHist.shift();
+    const recent = angleVelHist.reduce((a,b)=>a+b,0);
+    if(gun && fireCooldown === 0 && Math.abs(recent) > 0.55){
+      fire();
+      fireCooldown = 10;
+      angleVelHist = [];
+    }
+  }
+  prevAngle = ang;
+
+  setState(gun ? 'ready' : 'pose');
+}
+
+function setState(s){
+  if(s==='lost'){ gestureText.textContent='找不到手 · 把手抬進畫面'; stateDot.classList.remove('ready'); }
+  else if(s==='pose'){ gestureText.textContent='比出手指槍 (食指伸、其餘收)'; stateDot.classList.remove('ready'); }
+  else if(s==='ready'){ gestureText.textContent='已上膛 · 大拇指上彈開火'; stateDot.classList.add('ready'); }
+}
+
+function fire(){
+  if(!aim || !fingerTip) return;
+  shots++;
+  muzzle = 6; recoil = 12;
+  tracer = { x1: fingerTip.x, y1: fingerTip.y, x2: aim.x, y2: aim.y, life: 1 };
+  sfx('shot');
+
+  if(target){
+    const d = pointToTargetAlongRay();
+    if(d !== null && d <= target.r + 8){
+      hits++; streak++;
+      const bonus = d < target.r*0.45 ? 2 : 1;
+      score += bonus;
+      burst(target.x, target.y, bonus);
+      tracer.x2 = target.x; tracer.y2 = target.y;
+      sfx('hit');
+      spawnTarget();
+    } else {
+      streak = 0;
+    }
+  }
+  updateBoard();
+}
+
+function pointToTargetAlongRay(){
+  if(!fingerTip || !aimDir || !target) return null;
+  const ox = fingerTip.x, oy = fingerTip.y;
+  const tx = target.x - ox, ty = target.y - oy;
+  const proj = tx*aimDir.x + ty*aimDir.y;
+  if(proj < 0) return null;
+  const cx = ox + aimDir.x*proj, cy = oy + aimDir.y*proj;
+  return Math.hypot(target.x - cx, target.y - cy);
+}
+
+function updateBoard(){
+  scoreEl.textContent = score;
+  metaEl.textContent = `命中 ${hits} · 射擊 ${shots}`;
+  streakEl.textContent = streak;
+}
+
+function burst(x,y,bonus){
+  const n = bonus>1 ? 26 : 16;
+  for(let i=0;i<n;i++){
+    const a = Math.random()*Math.PI*2, sp = 2+Math.random()*(bonus>1?7:5);
+    particles.push({ x, y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, life:1,
+      col: Math.random()<0.5?C.coral:C.cream, sz:2+Math.random()*3 });
+  }
+  particles.push({ ring:true, x, y, r:6, life:1, col:C.coral });
+}
+
+function drawTarget(){
+  if(!target) return;
+  target.pulse += 0.08;
+  const r = target.r * (1 + Math.sin(target.pulse)*0.04);
+  ctx.save(); ctx.translate(target.x, target.y);
+  ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.globalAlpha=0.92; ctx.fillStyle=C.cream; ctx.fill(); ctx.globalAlpha=1;
+  ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.strokeStyle=C.coral; ctx.lineWidth=3; ctx.stroke();
+  ctx.beginPath(); ctx.arc(0,0,r*0.68,0,Math.PI*2); ctx.strokeStyle=C.teal; ctx.lineWidth=3; ctx.stroke();
+  ctx.beginPath(); ctx.arc(0,0,r*0.32,0,Math.PI*2); ctx.fillStyle=C.coral; ctx.fill();
+  ctx.restore();
+}
+
+function drawLaser(){
+  if(!armed || !fingerTip || !aim) return;
+  ctx.save();
+  const grad = ctx.createLinearGradient(fingerTip.x, fingerTip.y, aim.x, aim.y);
+  grad.addColorStop(0, 'rgba(232,115,74,0.85)');
+  grad.addColorStop(1, 'rgba(232,115,74,0)');
+  ctx.strokeStyle = grad; ctx.lineWidth = 2; ctx.setLineDash([2,6]);
+  ctx.beginPath(); ctx.moveTo(fingerTip.x, fingerTip.y); ctx.lineTo(aim.x, aim.y); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+function drawCrosshair(){
+  if(!aim) return;
+  const x = aim.x, y = aim.y;
+  ctx.save(); ctx.translate(x, y);
+  const col = armed ? C.coral : C.cream;
+  ctx.globalAlpha = armed ? 1 : 0.5;
+  ctx.strokeStyle = col; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(0,0,18,0,Math.PI*2); ctx.stroke();
+  ctx.beginPath();
+  [[0,-18,0,-8],[0,18,0,8],[-18,0,-8,0],[18,0,8,0]].forEach(s=>{ ctx.moveTo(s[0],s[1]); ctx.lineTo(s[2],s[3]); });
+  ctx.stroke();
+  ctx.beginPath(); ctx.arc(0,0,2,0,Math.PI*2); ctx.fillStyle=col; ctx.fill();
+  ctx.globalAlpha = 1; ctx.restore();
+}
+
+function drawTracer(){
+  if(!tracer) return;
+  ctx.save();
+  ctx.globalAlpha = tracer.life;
+  ctx.strokeStyle = C.cream; ctx.lineWidth = 2.5; ctx.shadowColor = C.coral; ctx.shadowBlur = 8;
+  ctx.beginPath(); ctx.moveTo(tracer.x1, tracer.y1); ctx.lineTo(tracer.x2, tracer.y2); ctx.stroke();
+  ctx.restore();
+  tracer.life -= 0.12;
+  if(tracer.life <= 0) tracer = null;
+}
+
+function drawMuzzle(){
+  if(muzzle <= 0 || !fingerTip) return;
+  ctx.save(); ctx.translate(fingerTip.x, fingerTip.y);
+  ctx.globalAlpha = muzzle/6;
+  const g = ctx.createRadialGradient(0,0,0,0,0,40);
+  g.addColorStop(0,'rgba(245,240,232,0.95)');
+  g.addColorStop(0.5,'rgba(232,115,74,0.5)');
+  g.addColorStop(1,'rgba(232,115,74,0)');
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(0,0,40,0,Math.PI*2); ctx.fill();
+  ctx.globalAlpha=1; ctx.restore();
+}
+
+function drawParticles(){
+  for(let i=particles.length-1;i>=0;i--){
+    const p = particles[i];
+    if(p.ring){ p.r+=4; p.life-=0.05; ctx.globalAlpha=Math.max(0,p.life);
+      ctx.strokeStyle=p.col; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.stroke(); ctx.globalAlpha=1; }
+    else { p.x+=p.vx; p.y+=p.vy; p.vy+=0.12; p.vx*=0.97; p.life-=0.025;
+      ctx.globalAlpha=Math.max(0,p.life); ctx.fillStyle=p.col;
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.sz,0,Math.PI*2); ctx.fill(); ctx.globalAlpha=1; }
+    if(p.life<=0) particles.splice(i,1);
+  }
+}
+
+function render(){
+  ctx.clearRect(0,0,W,H);
+  drawTarget();
+  drawLaser();
+  drawTracer();
+  drawParticles();
+  drawMuzzle();
+  drawCrosshair();
+  if(muzzle>0) muzzle--;
+  if(recoil>0){ recoil*=0.8; if(recoil<0.3) recoil=0; }
+}
+
+let lastT = -1;
+function loop(){
+  if(landmarker && cam.readyState>=2 && cam.currentTime!==lastT){
+    lastT = cam.currentTime;
+    const res = landmarker.detectForVideo(cam, performance.now());
+    handleHand(res);
+  }
+  render();
+  requestAnimationFrame(loop);
+}
+
+async function boot(){
+  errEl.textContent=''; goBtn.disabled=true; goBtn.textContent='載入中…';
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video:{ facingMode:'user', width:{ideal:1280}, height:{ideal:720} }, audio:false });
+    cam.srcObject = stream; await cam.play(); size();
+
+    const vision = await FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+    landmarker = await HandLandmarker.createFromOptions(vision, {
+      baseOptions:{ modelAssetPath:"https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task", delegate:"GPU" },
+      runningMode:"VIDEO", numHands:1 });
+
+    gate.classList.add('hidden');
+    spawnTarget(); updateBoard(); loop();
+  }catch(e){
+    console.error(e); goBtn.disabled=false; goBtn.textContent='開始遊戲';
+    errEl.textContent = e.name==='NotAllowedError'
+      ? '鏡頭被擋住了 — 若在 App 內預覽,請改用 Safari 或部署後用網址開啟。'
+      : '載入失敗:' + (e.message||e.name);
+  }
+}
+goBtn.addEventListener('click', boot);
+</script>
+</body>
+</html>
