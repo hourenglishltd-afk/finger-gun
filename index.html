@@ -94,13 +94,13 @@
   <div id="gate">
     <div class="kicker">gesture shooter</div>
     <h1>手指神槍手</h1>
-    <p class="lead">把手側過來比成槍,食指橫向指出去——準星會沿著你的指尖飛出去。大拇指往上一彈,擊發。</p>
+    <p class="lead">準心固定在畫面正中央,靶會跟著你的手移動。把手舉進畫面就自動上膛,移動手把靶帶到中央準心上,再用大拇指往上一彈,擊發。</p>
     <div class="how">
-      <div class="step"><div class="emo">🫳</div><div class="cap">手側 30–45°<br>食指橫指畫面</div></div>
-      <div class="step"><div class="emo">🎯</div><div class="cap">準星沿指尖<br>方向延伸</div></div>
+      <div class="step"><div class="emo">🖐️</div><div class="cap">手舉進畫面<br>自動上膛</div></div>
+      <div class="step"><div class="emo">🎯</div><div class="cap">移動手<br>把靶帶到中央準心</div></div>
       <div class="step"><div class="emo">👍</div><div class="cap">大拇指上彈<br>扣下扳機</div></div>
     </div>
-    <div class="tip">關鍵:食指要「橫」在畫面裡(指向左右),不要直直戳向鏡頭——鏡頭才看得清你指向哪。</div>
+    <div class="tip">關鍵:靶會黏著你的手、準心固定在正中央。把手移到畫面中央讓靶蓋住準心,再彈大拇指開火。手側著比也沒關係,只要鏡頭看得到手就行。</div>
     <button class="go" id="goBtn">開始遊戲</button>
     <div class="err" id="err"></div>
     <div class="note">需要鏡頭權限與網路連線(載入手部模型)。請用 Safari/Chrome 開啟,勿用 App 內建預覽。桌機鏡頭最穩。</div>
@@ -129,13 +129,10 @@ let W = 0, H = 0, DPR = 1;
 
 let score = 0, hits = 0, shots = 0, streak = 0;
 let aim = null;
-let aimDir = null;
-let fingerBase = null;
-let fingerTip = null;
 let armed = false;
 let target = null;
 let particles = [];
-let muzzle = 0, recoil = 0;
+let muzzle = 0;
 let tracer = null;
 
 let actx = null;
@@ -160,12 +157,16 @@ function size(){
   W = window.innerWidth; H = window.innerHeight;
   play.width = W*DPR; play.height = H*DPR;
   ctx.setTransform(DPR,0,0,DPR,0,0);
+  aim = { x: W/2, y: H/2 };
 }
 window.addEventListener('resize', ()=>{ size(); if(target) clampTarget(); });
 
 function spawnTarget(){
-  const m = 90, r = 46;
-  target = { x: m + Math.random()*(W-m*2), y: m+40 + Math.random()*(H-m*2-120), r, pulse:0 };
+  const r = 46;
+  const x = W*0.5 + (Math.random()-0.5)*W*0.5;
+  const y = H*0.5 + (Math.random()-0.5)*H*0.4;
+  target = { x, y, r, pulse:0 };
+  clampTarget();
 }
 function clampTarget(){
   if(!target) return;
@@ -173,19 +174,9 @@ function clampTarget(){
   target.y = Math.max(110, Math.min(H-90, target.y));
 }
 
-function dist(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
-
 function thumbAngle(lm){
   const mcp = lm[2], tip = lm[4];
   return Math.atan2(tip.y - mcp.y, tip.x - mcp.x);
-}
-
-function isGunPose(lm){
-  const idxExt = dist(lm[8], lm[0]) > dist(lm[6], lm[0]) * 1.15;
-  const mid = dist(lm[12], lm[0]) < dist(lm[10], lm[0]) * 1.05;
-  const ring = dist(lm[16], lm[0]) < dist(lm[14], lm[0]) * 1.05;
-  const pinky = dist(lm[20], lm[0]) < dist(lm[18], lm[0]) * 1.05;
-  return idxExt && mid && ring && pinky;
 }
 
 let prevAngle = null;
@@ -196,27 +187,28 @@ let poseLostFrames = 0;
 function handleHand(res){
   if(!res.handLandmarks || res.handLandmarks.length === 0){
     poseLostFrames++;
-    if(poseLostFrames > 4){ armed=false; aim=null; fingerBase=null; fingerTip=null;
-      setState('lost'); prevAngle=null; }
+    // 偵測中斷時就清掉角度歷史,避免短暫斷訊重連時殘留的舊角度誤判開火
+    prevAngle = null; angleVelHist = [];
+    if(poseLostFrames > 4){ armed=false; setState('lost'); }
     return;
   }
   poseLostFrames = 0;
   const lm = res.handLandmarks[0];
 
-  const baseN = lm[5], tipN = lm[8];
-  fingerBase = { x: baseN.x*W, y: baseN.y*H };
-  fingerTip  = { x: tipN.x*W,  y: tipN.y*H };
+  // 只要鏡頭抓到手就上膛——不再要求手指槍姿勢
+  armed = true;
 
-  let dx = fingerTip.x - fingerBase.x;
-  let dy = fingerTip.y - fingerBase.y;
-  const len = Math.hypot(dx,dy) || 1;
-  aimDir = { x: dx/len, y: dy/len };
-
-  const reach = Math.max(W,H) * 0.55;
-  aim = { x: fingerTip.x + aimDir.x*reach, y: fingerTip.y + aimDir.y*reach };
-
-  const gun = isGunPose(lm);
-  armed = gun;
+  // 用手掌中心(取手腕+四指根、不含拇指,這樣彈拇指開火時不會牽動瞄準)帶動靶,
+  // 玩家移動手就能把靶滑到固定在畫面中央的準心上,再彈拇指擊發。
+  if(target){
+    const palm = [0,5,9,13,17];
+    let px = 0, py = 0;
+    for(const i of palm){ px += lm[i].x; py += lm[i].y; }
+    px = (px/palm.length)*W; py = (py/palm.length)*H;
+    target.x += (px - target.x) * 0.35;
+    target.y += (py - target.y) * 0.35;
+    clampTarget();
+  }
 
   if(fireCooldown > 0) fireCooldown--;
   const ang = thumbAngle(lm);
@@ -227,7 +219,7 @@ function handleHand(res){
     angleVelHist.push(d);
     if(angleVelHist.length > 4) angleVelHist.shift();
     const recent = angleVelHist.reduce((a,b)=>a+b,0);
-    if(gun && fireCooldown === 0 && Math.abs(recent) > 0.55){
+    if(armed && fireCooldown === 0 && Math.abs(recent) > 0.38){
       fire();
       fireCooldown = 10;
       angleVelHist = [];
@@ -235,25 +227,25 @@ function handleHand(res){
   }
   prevAngle = ang;
 
-  setState(gun ? 'ready' : 'pose');
+  setState('ready');
 }
 
 function setState(s){
   if(s==='lost'){ gestureText.textContent='找不到手 · 把手抬進畫面'; stateDot.classList.remove('ready'); }
-  else if(s==='pose'){ gestureText.textContent='比出手指槍 (食指伸、其餘收)'; stateDot.classList.remove('ready'); }
-  else if(s==='ready'){ gestureText.textContent='已上膛 · 大拇指上彈開火'; stateDot.classList.add('ready'); }
+  else { gestureText.textContent='已上膛 · 大拇指上彈開火'; stateDot.classList.add('ready'); }
 }
 
 function fire(){
-  if(!aim || !fingerTip) return;
+  if(!aim) return;
   shots++;
-  muzzle = 6; recoil = 12;
-  tracer = { x1: fingerTip.x, y1: fingerTip.y, x2: aim.x, y2: aim.y, life: 1 };
+  muzzle = 6;
+  // 子彈從畫面底部中央(玩家方向)射向中央準心
+  tracer = { x1: W/2, y1: H, x2: aim.x, y2: aim.y, life: 1 };
   sfx('shot');
 
   if(target){
-    const d = pointToTargetAlongRay();
-    if(d !== null && d <= target.r + 8){
+    const d = Math.hypot(aim.x - target.x, aim.y - target.y);
+    if(d <= target.r + 8){
       hits++; streak++;
       const bonus = d < target.r*0.45 ? 2 : 1;
       score += bonus;
@@ -266,16 +258,6 @@ function fire(){
     }
   }
   updateBoard();
-}
-
-function pointToTargetAlongRay(){
-  if(!fingerTip || !aimDir || !target) return null;
-  const ox = fingerTip.x, oy = fingerTip.y;
-  const tx = target.x - ox, ty = target.y - oy;
-  const proj = tx*aimDir.x + ty*aimDir.y;
-  if(proj < 0) return null;
-  const cx = ox + aimDir.x*proj, cy = oy + aimDir.y*proj;
-  return Math.hypot(target.x - cx, target.y - cy);
 }
 
 function updateBoard(){
@@ -306,18 +288,6 @@ function drawTarget(){
   ctx.restore();
 }
 
-function drawLaser(){
-  if(!armed || !fingerTip || !aim) return;
-  ctx.save();
-  const grad = ctx.createLinearGradient(fingerTip.x, fingerTip.y, aim.x, aim.y);
-  grad.addColorStop(0, 'rgba(232,115,74,0.85)');
-  grad.addColorStop(1, 'rgba(232,115,74,0)');
-  ctx.strokeStyle = grad; ctx.lineWidth = 2; ctx.setLineDash([2,6]);
-  ctx.beginPath(); ctx.moveTo(fingerTip.x, fingerTip.y); ctx.lineTo(aim.x, aim.y); ctx.stroke();
-  ctx.setLineDash([]);
-  ctx.restore();
-}
-
 function drawCrosshair(){
   if(!aim) return;
   const x = aim.x, y = aim.y;
@@ -345,8 +315,8 @@ function drawTracer(){
 }
 
 function drawMuzzle(){
-  if(muzzle <= 0 || !fingerTip) return;
-  ctx.save(); ctx.translate(fingerTip.x, fingerTip.y);
+  if(muzzle <= 0 || !aim) return;
+  ctx.save(); ctx.translate(aim.x, aim.y);
   ctx.globalAlpha = muzzle/6;
   const g = ctx.createRadialGradient(0,0,0,0,0,40);
   g.addColorStop(0,'rgba(245,240,232,0.95)');
@@ -371,13 +341,11 @@ function drawParticles(){
 function render(){
   ctx.clearRect(0,0,W,H);
   drawTarget();
-  drawLaser();
   drawTracer();
   drawParticles();
   drawMuzzle();
   drawCrosshair();
   if(muzzle>0) muzzle--;
-  if(recoil>0){ recoil*=0.8; if(recoil<0.3) recoil=0; }
 }
 
 let lastT = -1;
