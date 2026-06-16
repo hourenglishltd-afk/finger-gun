@@ -134,6 +134,11 @@ const diagEl = document.getElementById('diag');
 const C = { cream:'#F5F0E8', coral:'#E8734A', teal:'#5B9EA6', ink:'#2b2620', good:'#7BC47F' };
 
 let landmarker = null;
+// iOS Safari 的 MediaPipe GPU(WebGL)delegate 很不穩、且 iOS 限制 WebGL context 數量,
+// 直接用 CPU(WASM)最可靠。iPadOS 會偽裝成 Mac,用 maxTouchPoints 補抓。
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent || '') ||
+  (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints||0) > 1);
+let inputLum = -1;
 let vision = null;
 let engine = '—';
 let frames = 0, framesSinceStart = 0;
@@ -402,7 +407,8 @@ async function switchToCPU(){
 
 function updateDiag(){
   const dim = (cam.videoWidth||0)+'×'+(cam.videoHeight||0);
-  diagEl.textContent = `引擎 ${engine} · 鏡頭 ${dim} · 幀 ${frames} · 手 ${lastHandCount}${lastHand?' ✋':''}${detErrMsg?(' · err:'+detErrMsg):''}`;
+  const inp = inputLum===-1?'—':(inputLum===-2?'讀取失敗':(inputLum<6?('黑('+inputLum+')'):String(inputLum)));
+  diagEl.textContent = `引擎 ${engine} · 鏡頭 ${dim} · 輸入 ${inp} · 幀 ${frames} · 手 ${lastHandCount}${lastHand?' ✋':''}${detErrMsg?(' · err:'+detErrMsg):''}`;
 }
 
 let lastT = -1;
@@ -415,6 +421,15 @@ function loop(){
         grab.width = cam.videoWidth; grab.height = cam.videoHeight;
       }
       gctx.drawImage(cam, 0, 0, grab.width, grab.height);
+      // 除錯:定期取樣 grab canvas 中央像素,確認真的有把影格送進去(iOS 偶爾會畫成黑的)
+      if(frames % 30 === 0){
+        try{
+          const cx = grab.width>>1, cy = grab.height>>1;
+          const px = gctx.getImageData(cx-2, cy-2, 4, 4).data;
+          let s = 0; for(let i=0;i<px.length;i+=4){ s += px[i]+px[i+1]+px[i+2]; }
+          inputLum = Math.round(s/(px.length/4)/3);
+        }catch(e){ inputLum = -2; }
+      }
       const res = landmarker.detectForVideo(grab, performance.now());
       const hands = res.landmarks || [];
       lastHandCount = hands.length;
@@ -452,9 +467,10 @@ async function boot(){
     vision = await FilesetResolver.forVisionTasks(
       "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
     try{
-      landmarker = await createLandmarker('GPU'); engine = 'GPU';
+      if(isIOS){ landmarker = await createLandmarker('CPU'); engine = 'CPU'; triedCPU = true; }
+      else { landmarker = await createLandmarker('GPU'); engine = 'GPU'; }
     }catch(e){
-      console.warn('GPU delegate unavailable, using CPU', e);
+      console.warn('Primary delegate unavailable, falling back to CPU', e);
       landmarker = await createLandmarker('CPU'); engine = 'CPU'; triedCPU = true;
     }
 
