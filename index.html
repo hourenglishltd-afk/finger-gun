@@ -117,6 +117,10 @@ import { HandLandmarker, FilesetResolver }
 const cam = document.getElementById('cam');
 const play = document.getElementById('play');
 const ctx = play.getContext('2d');
+// Safari/WebKit 常常無法直接把 <video> 餵給 detectForVideo(會回傳 0 隻手且不報錯),
+// 改成每幀先把影格畫到這張離屏 canvas、再把 canvas 交給 MediaPipe,跨瀏覽器最穩。
+const grab = document.createElement('canvas');
+const gctx = grab.getContext('2d', { willReadFrequently: true });
 const gate = document.getElementById('gate');
 const goBtn = document.getElementById('goBtn');
 const errEl = document.getElementById('err');
@@ -134,7 +138,7 @@ let vision = null;
 let engine = '—';
 let frames = 0, framesSinceStart = 0;
 let everDetected = false, triedCPU = false;
-let lastHand = false, detErrMsg = '';
+let lastHand = false, lastHandCount = 0, detErrMsg = '';
 let W = 0, H = 0, DPR = 1;
 
 let score = 0, hits = 0, shots = 0, streak = 0;
@@ -377,7 +381,7 @@ async function switchToCPU(){
 
 function updateDiag(){
   const dim = (cam.videoWidth||0)+'×'+(cam.videoHeight||0);
-  diagEl.textContent = `引擎 ${engine} · 鏡頭 ${dim} · 幀 ${frames} · ${lastHand?'有手 ✋':'無手'}${detErrMsg?(' · err:'+detErrMsg):''}`;
+  diagEl.textContent = `引擎 ${engine} · 鏡頭 ${dim} · 幀 ${frames} · 手 ${lastHandCount}${lastHand?' ✋':''}${detErrMsg?(' · err:'+detErrMsg):''}`;
 }
 
 let lastT = -1;
@@ -386,8 +390,13 @@ function loop(){
     lastT = cam.currentTime;
     frames++; framesSinceStart++;
     try{
-      const res = landmarker.detectForVideo(cam, performance.now());
-      lastHand = !!(res.handLandmarks && res.handLandmarks.length);
+      if(grab.width !== cam.videoWidth || grab.height !== cam.videoHeight){
+        grab.width = cam.videoWidth; grab.height = cam.videoHeight;
+      }
+      gctx.drawImage(cam, 0, 0, grab.width, grab.height);
+      const res = landmarker.detectForVideo(grab, performance.now());
+      lastHandCount = (res.handLandmarks && res.handLandmarks.length) || 0;
+      lastHand = lastHandCount > 0;
       if(lastHand) everDetected = true;
       handleHand(res);
       detErrMsg = '';
