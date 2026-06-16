@@ -139,6 +139,7 @@ let engine = '—';
 let frames = 0, framesSinceStart = 0;
 let everDetected = false, triedCPU = false;
 let lastHand = false, lastHandCount = 0, detErrMsg = '';
+let handPts = null;
 let W = 0, H = 0, DPR = 1;
 
 let score = 0, hits = 0, shots = 0, streak = 0;
@@ -199,7 +200,9 @@ let fireCooldown = 0;
 let poseLostFrames = 0;
 
 function handleHand(res){
-  if(!res.handLandmarks || res.handLandmarks.length === 0){
+  // Tasks API(HandLandmarker)的結果鍵是 res.landmarks,不是 handLandmarks/multiHandLandmarks
+  const hands = res.landmarks || [];
+  if(hands.length === 0){
     poseLostFrames++;
     // 偵測中斷時就清掉角度歷史,避免短暫斷訊重連時殘留的舊角度誤判開火
     prevAngle = null; angleVelHist = [];
@@ -207,7 +210,7 @@ function handleHand(res){
     return;
   }
   poseLostFrames = 0;
-  const lm = res.handLandmarks[0];
+  const lm = hands[0];
 
   // 只要鏡頭抓到手就上膛——不再要求手指槍姿勢
   armed = true;
@@ -352,11 +355,33 @@ function drawParticles(){
   }
 }
 
+// MediaPipe 手部 21 點骨架連線(除錯視覺化用)
+const HAND_BONES = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],
+  [5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],
+  [13,17],[17,18],[18,19],[19,20],[0,17]];
+function drawHand(){
+  if(!handPts) return;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(91,158,166,0.75)'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  for(const [a,b] of HAND_BONES){
+    ctx.moveTo(handPts[a].x*W, handPts[a].y*H);
+    ctx.lineTo(handPts[b].x*W, handPts[b].y*H);
+  }
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(245,240,232,0.95)';
+  for(const p of handPts){
+    ctx.beginPath(); ctx.arc(p.x*W, p.y*H, 3, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
+}
+
 function render(){
   ctx.clearRect(0,0,W,H);
   drawTarget();
   drawTracer();
   drawParticles();
+  drawHand();
   drawMuzzle();
   drawCrosshair();
   if(muzzle>0) muzzle--;
@@ -395,9 +420,16 @@ function loop(){
       }
       gctx.drawImage(cam, 0, 0, grab.width, grab.height);
       const res = landmarker.detectForVideo(grab, performance.now());
-      lastHandCount = (res.handLandmarks && res.handLandmarks.length) || 0;
+      const hands = res.landmarks || [];
+      lastHandCount = hands.length;
       lastHand = lastHandCount > 0;
+      handPts = lastHand ? hands[0] : null;
       if(lastHand) everDetected = true;
+      // 除錯:前幾幀與之後每 60 幀印出完整結果物件,確認 MediaPipe 回傳哪些 key、有沒有手
+      if(frames <= 6 || frames % 60 === 0){
+        console.log('[finger-gun] frame', frames, '· engine', engine,
+          '· result keys:', Object.keys(res), '· hands:', lastHandCount, res);
+      }
       handleHand(res);
       detErrMsg = '';
     }catch(err){
