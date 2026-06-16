@@ -41,6 +41,9 @@
     background:var(--coral); margin-right:7px; vertical-align: middle; }
   #gestureTag .dot.ready { background:#7BC47F; }
 
+  #diag { top: 10px; left: 12px; font-size: 9px; line-height: 1.45; letter-spacing: 0.03em;
+    color: var(--cream); opacity: 0.6; max-width: 60vw; }
+
   #streakTag { bottom: 22px; right: 18px; font-size: 11px; letter-spacing: 0.12em;
     color: var(--cream); opacity: 0.85; text-align:right; }
   #streakTag b { color: var(--coral); font-size: 15px; }
@@ -89,6 +92,7 @@
   </div>
 
   <div id="gestureTag" class="hud"><span class="dot" id="stateDot"></span><span id="gestureText">待命</span></div>
+  <div id="diag" class="hud"></div>
   <div id="streakTag" class="hud">連續命中 <b id="streak">0</b></div>
 
   <div id="gate">
@@ -121,10 +125,16 @@ const metaEl = document.getElementById('meta');
 const streakEl = document.getElementById('streak');
 const gestureText = document.getElementById('gestureText');
 const stateDot = document.getElementById('stateDot');
+const diagEl = document.getElementById('diag');
 
 const C = { cream:'#F5F0E8', coral:'#E8734A', teal:'#5B9EA6', ink:'#2b2620', good:'#7BC47F' };
 
 let landmarker = null;
+let vision = null;
+let engine = '—';
+let frames = 0, framesSinceStart = 0;
+let everDetected = false, triedCPU = false;
+let lastHand = false, detErrMsg = '';
 let W = 0, H = 0, DPR = 1;
 
 let score = 0, hits = 0, shots = 0, streak = 0;
@@ -348,13 +358,49 @@ function render(){
   if(muzzle>0) muzzle--;
 }
 
+const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
+
+function createLandmarker(delegate){
+  return HandLandmarker.createFromOptions(vision, {
+    baseOptions:{ modelAssetPath: MODEL_URL, delegate },
+    runningMode:"VIDEO", numHands:1 });
+}
+
+async function switchToCPU(){
+  triedCPU = true;
+  try{
+    const lm = await createLandmarker('CPU');
+    landmarker = lm; engine = 'CPU'; framesSinceStart = 0;
+    console.warn('Switched hand detection to CPU delegate (GPU produced no detections).');
+  }catch(e){ console.error('CPU fallback failed', e); detErrMsg = 'cpu-fallback-fail'; }
+}
+
+function updateDiag(){
+  const dim = (cam.videoWidth||0)+'×'+(cam.videoHeight||0);
+  diagEl.textContent = `引擎 ${engine} · 鏡頭 ${dim} · 幀 ${frames} · ${lastHand?'有手 ✋':'無手'}${detErrMsg?(' · err:'+detErrMsg):''}`;
+}
+
 let lastT = -1;
 function loop(){
-  if(landmarker && cam.readyState>=2 && cam.currentTime!==lastT){
+  if(landmarker && cam.readyState>=2 && cam.videoWidth>0 && cam.currentTime!==lastT){
     lastT = cam.currentTime;
-    const res = landmarker.detectForVideo(cam, performance.now());
-    handleHand(res);
+    frames++; framesSinceStart++;
+    try{
+      const res = landmarker.detectForVideo(cam, performance.now());
+      lastHand = !!(res.handLandmarks && res.handLandmarks.length);
+      if(lastHand) everDetected = true;
+      handleHand(res);
+      detErrMsg = '';
+    }catch(err){
+      detErrMsg = (err && (err.message||err.name)) || 'detect-error';
+      console.error('detectForVideo failed', err);
+    }
+    // GPU delegate 在部分裝置會「載入成功卻抓不到手」——跑一段時間都沒偵測到就自動換成 CPU
+    if(!everDetected && !triedCPU && engine==='GPU' && framesSinceStart>150){
+      switchToCPU();
+    }
   }
+  updateDiag();
   render();
   requestAnimationFrame(loop);
 }
@@ -366,11 +412,14 @@ async function boot(){
       video:{ facingMode:'user', width:{ideal:1280}, height:{ideal:720} }, audio:false });
     cam.srcObject = stream; await cam.play(); size();
 
-    const vision = await FilesetResolver.forVisionTasks(
+    vision = await FilesetResolver.forVisionTasks(
       "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
-    landmarker = await HandLandmarker.createFromOptions(vision, {
-      baseOptions:{ modelAssetPath:"https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task", delegate:"GPU" },
-      runningMode:"VIDEO", numHands:1 });
+    try{
+      landmarker = await createLandmarker('GPU'); engine = 'GPU';
+    }catch(e){
+      console.warn('GPU delegate unavailable, using CPU', e);
+      landmarker = await createLandmarker('CPU'); engine = 'CPU'; triedCPU = true;
+    }
 
     gate.classList.add('hidden');
     spawnTarget(); updateBoard(); loop();
